@@ -1,0 +1,57 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  system.debug: true   # enable debug logs
+
+steps:
+- checkout: self
+  fetchDepth: 0
+
+- task: SonarCloudPrepare@4
+  inputs:
+    SonarCloud: 'sonarnewtoken20feb1'
+    organization: 'security-tool-poc'
+    configMode: 'manual'
+    projectKey: 'Pravin1234'
+    projectName: 'tool testing'
+    extraProperties: |
+      sonar.host.url=https://sonarcloud.io
+      sonar.sourceEncoding=UTF-8
+      sonar.java.binaries=$(Build.SourcesDirectory)/sonar-scanner-maven/maven-basic/target/classes
+      sonar.verbose=true
+
+- task: Maven@4
+  inputs:
+    mavenPomFile: 'sonar-scanner-maven/maven-basic/pom.xml'
+    goals: 'verify sonar:sonar'
+    options: '-Dsonar.projectBaseDir=$(Build.SourcesDirectory)/sonar-scanner-maven/maven-basic'
+    javaHomeOption: 'JDKVersion'
+    jdkVersionOption: '1.17'
+    publishJUnitResults: true
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+
+- task: SonarCloudPublish@4
+  inputs:
+    pollingTimeoutSec: '300'
+
+    # Custom step: create Azure Boards work item if Quality Gate fails
+- script: |
+    echo "Checking Quality Gate status..."
+    # Example: call SonarCloud Web API to get Quality Gate status
+    STATUS=$(curl -s -u $(SONAR_TOKEN): https://sonarcloud.io/api/qualitygates/project_status?projectKey=Pravin1234 | jq -r '.projectStatus.status')
+
+    if [ "$STATUS" != "OK" ]; then
+      echo "Quality Gate failed, creating Azure Boards work item..."
+      curl -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Basic $(System.AccessToken)" \
+        https://dev.azure.com/YourOrg/YourProject/_apis/wit/workitems/$Task?api-version=6.0 \
+        -d '[{"op":"add","path":"/fields/System.Title","value":"SonarCloud Quality Gate Failed"}]'
+    else
+      echo "Quality Gate passed, no work item needed."
+    fi
+  displayName: 'Link SonarCloud result to Azure Boards'
